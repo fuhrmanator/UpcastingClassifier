@@ -58,16 +58,7 @@ public class VoidVisitorStarter {
                 targetType = JavaParserFacade.get(typeSolver).getType(assignExpr.getTarget());
 
                 System.out.println("New (assignExpr): " + assignExpr);
-//                System.out.println("    Type from resolver: " + JavaParserFacade.get(typeSolver).getType(objectCreationExpr));
-//                System.out.print("  assigned to ");
-//                assignExpr.getTarget().ifFieldAccessExpr(fieldAccessExpr -> {
-//                    System.out.println("fieldAccess: " + fieldAccessExpr.getName());
-//                });
-//                assignExpr.getTarget().ifNameExpr(nameExpr -> {
-//                    System.out.println("nameExpression: " + nameExpr.getName());
-//                });
-//                System.out.println("    Type from resolver: " + JavaParserFacade.get(typeSolver).getType(assignExpr.getTarget()));
-                if (targetType.equals(expressionType)) {
+                if (isSameType(targetType, expressionType)) {
                     System.out.println("NO upcasting -- same type (" + targetType + ") on both sides of assignment.");
                 } else {
                     System.out.println("Upcasting -- from (" + expressionType + ") to (" + targetType + ")");
@@ -76,7 +67,6 @@ public class VoidVisitorStarter {
                         flatMap(CompilationUnit::getPrimaryTypeName));
             });
         }
-
 
         @Override
         public void visit(VariableDeclarator variableDeclarator, Void arg) {
@@ -88,10 +78,7 @@ public class VoidVisitorStarter {
                     targetType = JavaParserFacade.get(typeSolver).getType(variableDeclarator);
 
                     System.out.println("New (variableDeclarator): " + variableDeclarator);
-//                    System.out.println("    Type from resolver: " + expressionType);
-//                    System.out.println("  assigned to type " + variableDeclarator.getType());
-//                    System.out.println("    Type from resolver: " + targetType);
-                    if (targetType.asReferenceType().getQualifiedName().equals(expressionType.asReferenceType().getQualifiedName())) {
+                    if (isSameType(targetType, expressionType)) {
                         System.out.println("NO upcasting -- same type (" + targetType + ") on both sides of assignment.");
                     } else {
                         System.out.println("Upcasting -- from (" + expressionType + ") to (" + targetType + ")");
@@ -100,6 +87,10 @@ public class VoidVisitorStarter {
                             flatMap(CompilationUnit::getPrimaryTypeName));
                 });
             });
+        }
+
+        private boolean isSameType(ResolvedType targetType, ResolvedType expressionType) {
+            return targetType.asReferenceType().getQualifiedName().equals(expressionType.asReferenceType().getQualifiedName());
         }
 
     }
