@@ -58,11 +58,30 @@ public class VoidVisitorStarter {
 //        }
 
         @Override
+        public void visit(AssignExpr assignExpr, Void arg) {
+            super.visit(assignExpr, arg);
+            assignExpr.getValue().ifObjectCreationExpr(objectCreationExpr -> {
+                System.out.println("New (assignExpr): " + objectCreationExpr
+                        + " ==> Type " + objectCreationExpr.getType());
+                System.out.print("  assigned to ");
+                assignExpr.getTarget().ifFieldAccessExpr(fieldAccessExpr -> {
+                    System.out.println("fieldAccess: " + fieldAccessExpr.getName());
+                });
+                assignExpr.getTarget().ifNameExpr(nameExpr -> {
+                    System.out.println("nameExpression: " + nameExpr.getName());
+                });
+                System.out.println("  in scope:" + assignExpr.findAncestor(CompilationUnit.class).
+                        flatMap(CompilationUnit::getPrimaryTypeName));
+            });
+        }
+
+
+        @Override
         public void visit(VariableDeclarator variableDeclarator, Void arg) {
             super.visit(variableDeclarator, arg);
             variableDeclarator.getInitializer().ifPresent(expression -> {
                 expression.ifObjectCreationExpr(objectCreationExpr -> {
-                    System.out.println("New: " + objectCreationExpr
+                    System.out.println("New (variableDeclarator): " + objectCreationExpr
                             + " ==> Type " + objectCreationExpr.getType());
                     System.out.println("  assigned to type " + variableDeclarator.getType());
                     if (variableDeclarator.getType().equals(objectCreationExpr.getType())) {
