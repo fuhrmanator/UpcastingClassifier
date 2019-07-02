@@ -17,8 +17,14 @@ import com.github.javaparser.utils.SourceRoot;
 import javax.swing.*;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class UpcastingClassification {
 
@@ -32,9 +38,9 @@ public class UpcastingClassification {
 
         JFileChooser chooser = new JFileChooser();
         chooser.setCurrentDirectory(new java.io.File("."));
-        chooser.setDialogTitle("Select project root folder (sources)");
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         chooser.setAcceptAllFileFilterUsed(false);
+        chooser.setDialogTitle("Select project root folder (sources)");
         int returnVal = chooser.showOpenDialog(null);
         if (returnVal == JFileChooser.APPROVE_OPTION) {
             CHOSEN_SOURCE = chooser.getSelectedFile();
@@ -43,14 +49,36 @@ public class UpcastingClassification {
             System.exit(0);
         }
 
-        String [] jarPaths = {
-                "C:/Users/fuhrm/.gradle/caches/modules-2/files-2.1/com.github.javaparser/javaparser-symbol-solver-core/3.14.5/9f941bdbb377ccc7a428f5f55779a33f1dff4145/javaparser-symbol-solver-core-3.14.5.jar",
-                "C:/Users/fuhrm/.gradle/caches/modules-2/files-2.1/com.github.javaparser/javaparser-symbol-solver-model/3.14.5/615636566c2a5a68a3ecf79407596c62bdcd441a/javaparser-symbol-solver-model-3.14.5-sources.jar",
-                "C:/Users/fuhrm/.gradle/caches/modules-2/files-2.1/com.github.javaparser/javaparser-core/3.14.5/9ecd8f4b92f3ab51d09464cf4c28847a81b96196/javaparser-core-3.14.5.jar",
-        };
+        chooser.setDialogTitle("Select project root folder (sources)");
+        returnVal = chooser.showOpenDialog(null);
+        File jarPath;
+        if (returnVal == JFileChooser.APPROVE_OPTION) {
+            jarPath = chooser.getSelectedFile();
+        } else {
+            jarPath = null;
+            System.exit(0);
+        }
+
+        Collection<Path> jarFilesCollection = Files.find(Paths.get(jarPath.getPath()),
+                Integer.MAX_VALUE,
+                (filePath, fileAttr) -> filePath.toFile().getName().endsWith("jar")).collect(Collectors.toList());
+        jarFilesCollection.forEach(System.out::println);
+
+        // Useful shell command to find JARs for a class:
+        // find /path/to/jars/ -name '*.jar' -exec grep -Hls VoidVisitor {} \;
+//        String [] jarPaths = {
+//                "C:/Users/fuhrm/.gradle/caches/modules-2/files-2.1/com.github.javaparser/javaparser-symbol-solver-core/3.14.5/9f941bdbb377ccc7a428f5f55779a33f1dff4145/javaparser-symbol-solver-core-3.14.5.jar",
+//                "C:/Users/fuhrm/.gradle/caches/modules-2/files-2.1/com.github.javaparser/javaparser-symbol-solver-model/3.14.5/615636566c2a5a68a3ecf79407596c62bdcd441a/javaparser-symbol-solver-model-3.14.5-sources.jar",
+//                "C:/Users/fuhrm/.gradle/caches/modules-2/files-2.1/com.github.javaparser/javaparser-core/3.14.5/9ecd8f4b92f3ab51d09464cf4c28847a81b96196/javaparser-core-3.14.5.jar",
+//        };
         typeSolver = new CombinedTypeSolver(new ReflectionTypeSolver(), new JavaParserTypeSolver(CHOSEN_SOURCE));
-        for (String jarPath: jarPaths)
-            typeSolver.add(new JarTypeSolver(jarPath));
+        jarFilesCollection.forEach(path -> {
+            try {
+                typeSolver.add(new JarTypeSolver(path.toFile()));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        });
 
         SymbolSolverCollectionStrategy projectRootSolverCollectionStrategy = new SymbolSolverCollectionStrategy();
         projectRoot =
