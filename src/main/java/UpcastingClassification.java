@@ -8,11 +8,11 @@ import com.github.javaparser.resolution.types.ResolvedType;
 import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JarTypeSolver;
-import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
 import com.github.javaparser.symbolsolver.utils.SymbolSolverCollectionStrategy;
 import com.github.javaparser.utils.ProjectRoot;
 import com.github.javaparser.utils.SourceRoot;
+import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
 import java.io.File;
@@ -24,28 +24,25 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class UpcastingClassification {
 
-    private static File CHOSEN_SOURCE;
+    private static File CHOSEN_SOURCE_DIR;
     private static CombinedTypeSolver typeSolver;
-//    private static SymbolSolver symbolSolver;
-
-    private static ProjectRoot projectRoot;
 
     public static void main(String[] args) throws Exception {
 
-        JFileChooser chooser = new JFileChooser();
+        ProjectRoot projectRoot;
+        JFileChooser chooser;
+        chooser = new JFileChooser();
         chooser.setCurrentDirectory(new java.io.File("."));
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         chooser.setAcceptAllFileFilterUsed(false);
         chooser.setDialogTitle("Select project root folder (sources)");
         int returnVal = chooser.showOpenDialog(null);
         if (returnVal == JFileChooser.APPROVE_OPTION) {
-            CHOSEN_SOURCE = chooser.getSelectedFile();
+            CHOSEN_SOURCE_DIR = chooser.getSelectedFile();
         } else {
-            projectRoot = null;
             System.exit(0);
         }
 
@@ -66,12 +63,7 @@ public class UpcastingClassification {
 
         // Useful shell command to find JARs for a class:
         // find /path/to/jars/ -name '*.jar' -exec grep -Hls VoidVisitor {} \;
-//        String [] jarPaths = {
-//                "C:/Users/fuhrm/.gradle/caches/modules-2/files-2.1/com.github.javaparser/javaparser-symbol-solver-core/3.14.5/9f941bdbb377ccc7a428f5f55779a33f1dff4145/javaparser-symbol-solver-core-3.14.5.jar",
-//                "C:/Users/fuhrm/.gradle/caches/modules-2/files-2.1/com.github.javaparser/javaparser-symbol-solver-model/3.14.5/615636566c2a5a68a3ecf79407596c62bdcd441a/javaparser-symbol-solver-model-3.14.5-sources.jar",
-//                "C:/Users/fuhrm/.gradle/caches/modules-2/files-2.1/com.github.javaparser/javaparser-core/3.14.5/9ecd8f4b92f3ab51d09464cf4c28847a81b96196/javaparser-core-3.14.5.jar",
-//        };
-        typeSolver = new CombinedTypeSolver(new ReflectionTypeSolver(), new JavaParserTypeSolver(CHOSEN_SOURCE));
+        typeSolver = new CombinedTypeSolver(new ReflectionTypeSolver() /*, new JavaParserTypeSolver(CHOSEN_SOURCE_DIR) */);
         jarFilesCollection.forEach(path -> {
             try {
                 typeSolver.add(new JarTypeSolver(path.toFile()));
@@ -83,9 +75,7 @@ public class UpcastingClassification {
         SymbolSolverCollectionStrategy projectRootSolverCollectionStrategy = new SymbolSolverCollectionStrategy();
         projectRoot =
                 projectRootSolverCollectionStrategy
-                        .collect(CHOSEN_SOURCE.toPath());
-//
-//        symbolSolver = new SymbolSolver(typeSolver);
+                        .collect(CHOSEN_SOURCE_DIR.toPath());
 
         VoidVisitor<?> theVisitor = new MyPrinter();
         System.out.println("projectRoot.getSourceRoots(): " + projectRoot.getSourceRoots());
@@ -126,17 +116,15 @@ public class UpcastingClassification {
         @Override
         public void visit(VariableDeclarator variableDeclarator, Void arg) {
             super.visit(variableDeclarator, arg);
-            variableDeclarator.getInitializer().ifPresent(expression -> {
-                expression.ifObjectCreationExpr(objectCreationExpr -> {
-                    ResolvedType targetType, expressionType;
-                    expressionType = JavaParserFacade.get(typeSolver).getType(objectCreationExpr);
-                    targetType = JavaParserFacade.get(typeSolver).getType(variableDeclarator);
+            variableDeclarator.getInitializer().ifPresent(expression -> expression.ifObjectCreationExpr(objectCreationExpr -> {
+                ResolvedType targetType, expressionType;
+                expressionType = JavaParserFacade.get(typeSolver).getType(objectCreationExpr);
+                targetType = JavaParserFacade.get(typeSolver).getType(variableDeclarator);
 
-                    System.out.println("New (variableDeclarator): " + variableDeclarator);
-                    classifyUpcasting(targetType, expressionType);
-                    printContainingClassName(variableDeclarator);
-                });
-            });
+                System.out.println("New (variableDeclarator): " + variableDeclarator);
+                classifyUpcasting(targetType, expressionType);
+                printContainingClassName(variableDeclarator);
+            }));
         }
 
         private void classifyUpcasting(ResolvedType targetType, ResolvedType expressionType) {
@@ -151,14 +139,14 @@ public class UpcastingClassification {
             }
         }
 
-        private void printContainingClassName(Node node) {
+        private void printContainingClassName(@NotNull Node node) {
             System.out.print("  in class:");
             Optional<String> name = node.findAncestor(CompilationUnit.class).
                     flatMap(CompilationUnit::getPrimaryTypeName);
             name.ifPresent(System.out::println);
         }
 
-        private boolean isSameType(ResolvedType targetType, ResolvedType expressionType) {
+        private boolean isSameType(@NotNull ResolvedType targetType, @NotNull ResolvedType expressionType) {
             return targetType.asReferenceType().getQualifiedName().equals(expressionType.asReferenceType().getQualifiedName());
         }
 
