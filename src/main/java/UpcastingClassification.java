@@ -1,13 +1,14 @@
+import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AssignExpr;
+import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.visitor.VoidVisitor;
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
 import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.resolution.types.ResolvedType;
-import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
-import com.github.javaparser.symbolsolver.resolution.SymbolSolver;
+import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JarTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
@@ -32,7 +33,6 @@ public class UpcastingClassification {
 
     private static File CHOSEN_SOURCE_DIR;
     private static CombinedTypeSolver typeSolver;
-    private static SymbolSolver symbolSolver;
 
     public static void main(String[] args) throws Exception {
 
@@ -85,7 +85,10 @@ public class UpcastingClassification {
                 e.printStackTrace();
             }
         });
-        symbolSolver = new SymbolSolver(typeSolver);
+
+        /* Need JSS for resolving types of local variables, for example */
+        JavaSymbolSolver symbolSolver = new JavaSymbolSolver(typeSolver);
+        StaticJavaParser.getConfiguration().setSymbolResolver(symbolSolver);
 
         SymbolSolverCollectionStrategy projectRootSolverCollectionStrategy = new SymbolSolverCollectionStrategy();
         projectRoot =
@@ -124,18 +127,22 @@ public class UpcastingClassification {
                 ResolvedType expressionType1 = null;
                 try {
                     expressionType1 = objectCreationExpr.getType().resolve();
+                    System.out.println(" objectCreationExpr.type() is " + expressionType1);
                 } catch (UnsolvedSymbolException e) {
-                    System.out.printf("!>>>> ERROR: Could not resolve objectCreationExpr type: %s\n", e.getName());
+                    System.err.printf("!>>>> ERROR: Could not resolve objectCreationExpr type: %s\n", e.getName());
                 } catch (UnsupportedOperationException e) {
-                    System.out.printf("!>>>> ERROR: %s\n", e.getMessage());
+                    System.err.printf("!>>>> ERROR: %s\n", e.getMessage());
                 }
                 expressionType = expressionType1;
                 try {
-                    assignExpr.getTarget().toTypeExpr().ifPresent(typeExpr -> targetType[0] = typeExpr.getType().resolve());
+                    Expression target = assignExpr.getTarget();
+                    targetType[0] = target.calculateResolvedType(); // uses JSS
+//                    assignExpr.getTarget().toTypeExpr().ifPresent(typeExpr -> targetType[0] = typeExpr.getType().resolve());
+                    System.out.println(" targetType is " + targetType[0]);
                 } catch (UnsolvedSymbolException e) {
-                    System.out.printf("!>>>> ERROR: Could not resolve assignExpr.getTarget() type: %s\n", e.getName());
+                    System.err.printf("!>>>> ERROR: Could not resolve assignExpr.getTarget() type: %s\n", e.getName());
                 } catch (UnsupportedOperationException e) {
-                    System.out.printf("!>>>> ERROR: %s\n", e.getMessage());
+                    System.err.printf("!>>>> ERROR: %s\n", e.getMessage());
                 }
 
                 if (targetType[0] != null && expressionType != null) classifyUpcasting(targetType[0], expressionType);
@@ -153,18 +160,18 @@ public class UpcastingClassification {
                 try {
                     expressionType1 = objectCreationExpr.getType().resolve();
                 } catch (UnsolvedSymbolException e) {
-                    System.out.printf("!>>>> ERROR: Could not resolve objectCreationExpr type: %s\n", e.getName());
+                    System.err.printf("!>>>> ERROR: Could not resolve objectCreationExpr type: %s\n", e.getName());
                 } catch (UnsupportedOperationException e) {
-                    System.out.printf("!>>>> ERROR: %s\n", e.getMessage());
+                    System.err.printf("!>>>> ERROR: %s\n", e.getMessage());
                 }
                 expressionType = expressionType1;
 
                 try {
                     targetType1 = variableDeclarator.getType().resolve();
                 } catch (UnsolvedSymbolException e) {
-                    System.out.printf("!>>>> ERROR: Could not resolve variableDeclarator type: %s\n", e.getName());
+                    System.err.printf("!>>>> ERROR: Could not resolve variableDeclarator type: %s\n", e.getName());
                 } catch (UnsupportedOperationException e) {
-                    System.out.printf("!>>>> ERROR: %s\n", e.getMessage());
+                    System.err.printf("!>>>> ERROR: %s\n", e.getMessage());
                 }
 
                 targetType = targetType1;
