@@ -4,10 +4,13 @@ import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.visitor.VoidVisitor;
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
+import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
+import com.github.javaparser.symbolsolver.resolution.SymbolSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JarTypeSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
 import com.github.javaparser.symbolsolver.utils.SymbolSolverCollectionStrategy;
 import com.github.javaparser.utils.ProjectRoot;
@@ -29,6 +32,7 @@ public class UpcastingClassification {
 
     private static File CHOSEN_SOURCE_DIR;
     private static CombinedTypeSolver typeSolver;
+    private static SymbolSolver symbolSolver;
 
     public static void main(String[] args) throws Exception {
 
@@ -46,7 +50,7 @@ public class UpcastingClassification {
             System.exit(0);
         }
 
-        chooser.setDialogTitle("Select project root folder (sources)");
+        chooser.setDialogTitle("Select project root folder (jars)");
         returnVal = chooser.showOpenDialog(null);
         File jarPath;
         if (returnVal == JFileChooser.APPROVE_OPTION) {
@@ -63,7 +67,17 @@ public class UpcastingClassification {
 
         // Useful shell command to find JARs for a class:
         // find /path/to/jars/ -name '*.jar' -exec grep -Hls VoidVisitor {} \;
-        typeSolver = new CombinedTypeSolver(new ReflectionTypeSolver() /*, new JavaParserTypeSolver(CHOSEN_SOURCE_DIR) */);
+        typeSolver = new CombinedTypeSolver(new ReflectionTypeSolver() /* , new JavaParserTypeSolver(CHOSEN_SOURCE_DIR) */);
+
+        /* Find all the Camel components' root directories, normally 'src' */
+        Collection<Path> componentsPathCollection = Files.find(Paths.get(jarPath.getPath()),
+                Integer.MAX_VALUE,
+                (filePath, fileAttr) -> filePath.toFile().getName().equals("src")).collect(Collectors.toList());
+        System.out.println("Components directories:");
+        componentsPathCollection.forEach(System.out::println);
+        componentsPathCollection.forEach(path -> typeSolver.add(new JavaParserTypeSolver(path.toFile())));
+
+
         jarFilesCollection.forEach(path -> {
             try {
                 typeSolver.add(new JarTypeSolver(path.toFile()));
@@ -71,6 +85,7 @@ public class UpcastingClassification {
                 e.printStackTrace();
             }
         });
+        symbolSolver = new SymbolSolver(typeSolver);
 
         SymbolSolverCollectionStrategy projectRootSolverCollectionStrategy = new SymbolSolverCollectionStrategy();
         projectRoot =
@@ -103,12 +118,27 @@ public class UpcastingClassification {
         public void visit(AssignExpr assignExpr, Void arg) {
             super.visit(assignExpr, arg);
             assignExpr.getValue().ifObjectCreationExpr(objectCreationExpr -> {
-                ResolvedType targetType, expressionType;
-                expressionType = JavaParserFacade.get(typeSolver).getType(objectCreationExpr);
-                targetType = JavaParserFacade.get(typeSolver).getType(assignExpr.getTarget());
+                System.out.printf("New (assignExpr) '%s'\n", assignExpr);
+                final ResolvedType[] targetType = new ResolvedType[1];
+                final ResolvedType expressionType;
+                ResolvedType expressionType1 = null;
+                try {
+                    expressionType1 = objectCreationExpr.getType().resolve();
+                } catch (UnsolvedSymbolException e) {
+                    System.out.printf("!>>>> ERROR: Could not resolve objectCreationExpr type: %s\n", e.getName());
+                } catch (UnsupportedOperationException e) {
+                    System.out.printf("!>>>> ERROR: %s\n", e.getMessage());
+                }
+                expressionType = expressionType1;
+                try {
+                    assignExpr.getTarget().toTypeExpr().ifPresent(typeExpr -> targetType[0] = typeExpr.getType().resolve());
+                } catch (UnsolvedSymbolException e) {
+                    System.out.printf("!>>>> ERROR: Could not resolve assignExpr.getTarget() type: %s\n", e.getName());
+                } catch (UnsupportedOperationException e) {
+                    System.out.printf("!>>>> ERROR: %s\n", e.getMessage());
+                }
 
-                System.out.println("New (assignExpr): " + assignExpr);
-                classifyUpcasting(targetType, expressionType);
+                if (targetType[0] != null && expressionType != null) classifyUpcasting(targetType[0], expressionType);
                 printContainingClassName(assignExpr);
             });
         }
@@ -117,23 +147,39 @@ public class UpcastingClassification {
         public void visit(VariableDeclarator variableDeclarator, Void arg) {
             super.visit(variableDeclarator, arg);
             variableDeclarator.getInitializer().ifPresent(expression -> expression.ifObjectCreationExpr(objectCreationExpr -> {
-                ResolvedType targetType, expressionType;
-                expressionType = JavaParserFacade.get(typeSolver).getType(objectCreationExpr);
-                targetType = JavaParserFacade.get(typeSolver).getType(variableDeclarator);
+                System.out.printf("New (variableDeclarator) '%s'\n", variableDeclarator);
+                final ResolvedType targetType, expressionType;
+                ResolvedType targetType1 = null, expressionType1 = null;
+                try {
+                    expressionType1 = objectCreationExpr.getType().resolve();
+                } catch (UnsolvedSymbolException e) {
+                    System.out.printf("!>>>> ERROR: Could not resolve objectCreationExpr type: %s\n", e.getName());
+                } catch (UnsupportedOperationException e) {
+                    System.out.printf("!>>>> ERROR: %s\n", e.getMessage());
+                }
+                expressionType = expressionType1;
 
-                System.out.println("New (variableDeclarator): " + variableDeclarator);
-                classifyUpcasting(targetType, expressionType);
+                try {
+                    targetType1 = variableDeclarator.getType().resolve();
+                } catch (UnsolvedSymbolException e) {
+                    System.out.printf("!>>>> ERROR: Could not resolve variableDeclarator type: %s\n", e.getName());
+                } catch (UnsupportedOperationException e) {
+                    System.out.printf("!>>>> ERROR: %s\n", e.getMessage());
+                }
+
+                targetType = targetType1;
+                if (targetType != null && expressionType != null) classifyUpcasting(targetType, expressionType);
                 printContainingClassName(variableDeclarator);
             }));
         }
 
         private void classifyUpcasting(ResolvedType targetType, ResolvedType expressionType) {
             if (isSameType(targetType, expressionType)) {
-                System.out.println("NO upcasting -- same type (" +
+                System.out.println("NO Upcasting -- same type (" +
                         targetType.asReferenceType().getQualifiedName() +
                         ") on both sides of assignment.");
             } else {
-                System.out.println("Upcasting -- from (" +
+                System.out.println("YES Upcasting -- from (" +
                         expressionType.asReferenceType().getQualifiedName() +
                         ") to (" + targetType.asReferenceType().getQualifiedName() + ")");
             }
