@@ -106,6 +106,7 @@ public class UpcastingClassification {
                 for (CompilationUnit cu : compilationUnits) {
                     System.out.print("-------- Analyzing ");
                     cu.getPrimaryTypeName().ifPresent(System.out::println);
+
                     theVisitor.visit(cu, null);
                 }
             } catch (IOException e) {

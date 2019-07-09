@@ -8,7 +8,7 @@ import java.io.PrintWriter;
 
 public class ASTVisualizer {
 
-    private static final String FILE_PATH = "src/main/java/ABC.java";
+    private static final String FILE_PATH = "../../GitHub/FactoryVariants/src/static_factory/Product.java";
 
     // See https://javaparser.org/inspecting-an-ast/
     public static void main(String[] args) throws Exception {
