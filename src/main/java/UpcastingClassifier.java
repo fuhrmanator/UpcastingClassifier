@@ -1,18 +1,14 @@
 import com.github.javaparser.ParseResult;
 import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.ast.CompilationUnit;
-import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
-import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.resolution.UnsolvedSymbolException;
-import com.github.javaparser.resolution.declarations.ResolvedConstructorDeclaration;
-import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.model.resolution.TypeSolver;
@@ -24,9 +20,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class UpcastingClassifier {
@@ -34,9 +28,11 @@ public class UpcastingClassifier {
     private final File projectSourceDir;
     private final TypeSolver typeSolver;
 
-    private List<String> staticFactoryMethodSignatures;
     private List<AssignExpr> objectCreationsInAssignments;
     private List<VariableDeclarator> objectCreationsInDeclarationInitializers;
+    private LinkedHashSet<ClassOrInterfaceDeclaration> compilationUnitsWithObjectCreationsUpcast = new LinkedHashSet<>();
+    private LinkedHashSet<ClassOrInterfaceDeclaration> compilationUnitsWithObjectCreationsNotUpcast =
+            new LinkedHashSet<>();
 
     public UpcastingClassifier(File projectSourceDir, TypeSolver typeSolver) {
         this.projectSourceDir = projectSourceDir;
@@ -69,9 +65,8 @@ public class UpcastingClassifier {
                 })
                 .collect(Collectors.toList());
 
-        UpcastingClassifier sff = new UpcastingClassifier(projectSourceDir, typeSolver);
-
-        sff.findObjectCreationExpressions(allCus);
+        UpcastingClassifier upcastingClassifier = new UpcastingClassifier(projectSourceDir, typeSolver);
+        upcastingClassifier.findObjectCreationExpressions(allCus);
 
     }
 
@@ -81,20 +76,27 @@ public class UpcastingClassifier {
         // assignments, e.g., l = new ArrayList(), or
         // declarations, e.g. List l = new ArrayList(...)
         objectCreationsInAssignments = getAssignmentsWithObjectCreations(compilationUnits);
-        objectCreationsInDeclarationInitializers = getVariableDeclaratorInitializersWithObjectCreations(compilationUnits);
+        objectCreationsInDeclarationInitializers =
+                getVariableDeclaratorInitializersWithObjectCreations(compilationUnits);
 
         objectCreationsInAssignments.forEach(assignExpr -> {
                     //System.out.println("Object creation in assignment: " + assignExpr.getValue());
-                    classifyUpcastingAssignmentExpr(assignExpr);
-                    printContainingClassName(assignExpr);
+                    if (isUpcastingAssignmentExpr(assignExpr))
+                        compilationUnitsWithObjectCreationsUpcast.add(getClass(assignExpr));
+                    else
+                        compilationUnitsWithObjectCreationsNotUpcast.add(getClass(assignExpr));
+                    //printContainingClassName(assignExpr);
                 }
         );
         objectCreationsInDeclarationInitializers.forEach(variableDeclarator -> {
 //                    Expression call = variableDeclarator.getInitializer().isPresent() ?
 //                            variableDeclarator.getInitializer().get() : null;
 //                    System.out.println("Object creation in initializer: " + call);
-                    classifyUpcastingVariableDeclarator(variableDeclarator);
-                    printContainingClassName(variableDeclarator);
+                    if (isUpcastingVariableDeclarator(variableDeclarator))
+                        compilationUnitsWithObjectCreationsUpcast.add(getClass(variableDeclarator));
+                    else
+                        compilationUnitsWithObjectCreationsNotUpcast.add(getClass(variableDeclarator));
+                    //printContainingClassName(variableDeclarator);
                 }
         );
     }
@@ -127,7 +129,8 @@ public class UpcastingClassifier {
 
     private static void printContainingClassName(@NotNull Node node) {
         System.out.print("  in class: ");
-        System.out.println(getFullyQualifiedName(Objects.requireNonNull(getClass(node))));
+        getClass(node).getFullyQualifiedName().ifPresent(System.out::println);
+        //System.out.println(getFullyQualifiedName(Objects.requireNonNull(getClass(node))));
     }
 
     // See https://stackoverflow.com/a/55722326/1168342
@@ -171,10 +174,6 @@ public class UpcastingClassifier {
         return (CompilationUnit) n1;
     }
 
-    public List<String> getStaticFactoryMethodSignatures() {
-        return staticFactoryMethodSignatures;
-    }
-
     public List<AssignExpr> getObjectCreationsInAssignments() {
         return objectCreationsInAssignments;
     }
@@ -183,15 +182,17 @@ public class UpcastingClassifier {
         return objectCreationsInDeclarationInitializers;
     }
 
-    private void classifyUpcasting(ResolvedType targetType, ResolvedType expressionType) {
+    private boolean isUpcasting(ResolvedType targetType, ResolvedType expressionType) {
         if (isSameType(targetType, expressionType)) {
             System.out.println("NO Upcasting -- same type (" +
                     targetType.asReferenceType().getQualifiedName() +
                     ") on both sides of assignment.");
+            return false;
         } else {
             System.out.println("YES Upcasting -- from (" +
                     expressionType.asReferenceType().getQualifiedName() +
                     ") to (" + targetType.asReferenceType().getQualifiedName() + ")");
+            return true;
         }
     }
 
@@ -199,7 +200,7 @@ public class UpcastingClassifier {
         return targetType.asReferenceType().getQualifiedName().equals(expressionType.asReferenceType().getQualifiedName());
     }
 
-    private void classifyUpcastingAssignmentExpr(AssignExpr assignExpr) {
+    private boolean isUpcastingAssignmentExpr(AssignExpr assignExpr) {
         System.out.printf("New (assignExpr) '%s'\n", assignExpr);
         final ObjectCreationExpr objectCreationExpr = assignExpr.getValue().asObjectCreationExpr();
         final ResolvedType[] targetType = new ResolvedType[1];
@@ -207,7 +208,7 @@ public class UpcastingClassifier {
         ResolvedType expressionType1 = null;
         try {
             expressionType1 = objectCreationExpr.getType().resolve();
-            System.out.println(" objectCreationExpr.type() is " + expressionType1);
+            //System.out.println(" objectCreationExpr.type() is " + expressionType1);
         } catch (UnsolvedSymbolException e) {
             System.err.printf("!>>>> ERROR: Could not resolve objectCreationExpr type: %s\n", e.getName());
         } catch (UnsupportedOperationException e) {
@@ -217,18 +218,20 @@ public class UpcastingClassifier {
         try {
             Expression target = assignExpr.getTarget();
             targetType[0] = target.calculateResolvedType(); // uses JSS
-//                    assignExpr.getTarget().toTypeExpr().ifPresent(typeExpr -> targetType[0] = typeExpr.getType().resolve());
-            System.out.println(" targetType is " + targetType[0]);
+//                    assignExpr.getTarget().toTypeExpr().ifPresent(typeExpr -> targetType[0] = typeExpr.getType()
+//                    .resolve());
+            //System.out.println(" targetType is " + targetType[0]);
         } catch (UnsolvedSymbolException e) {
             System.err.printf("!>>>> ERROR: Could not resolve assignExpr.getTarget() type: %s\n", e.getName());
         } catch (UnsupportedOperationException e) {
             System.err.printf("!>>>> ERROR: %s\n", e.getMessage());
         }
 
-        if (targetType[0] != null && expressionType != null) classifyUpcasting(targetType[0], expressionType);
+        if (targetType[0] != null && expressionType != null) return isUpcasting(targetType[0], expressionType);
+        else return false;
     }
 
-    private void classifyUpcastingVariableDeclarator(VariableDeclarator variableDeclarator) {
+    private boolean isUpcastingVariableDeclarator(VariableDeclarator variableDeclarator) {
         final ObjectCreationExpr objectCreationExpr = variableDeclarator.getInitializer().get().asObjectCreationExpr();
         System.out.printf("New (variableDeclarator) '%s'\n", variableDeclarator);
         final ResolvedType targetType, expressionType;
@@ -251,8 +254,17 @@ public class UpcastingClassifier {
         }
 
         targetType = targetType1;
-        if (targetType != null && expressionType != null) classifyUpcasting(targetType, expressionType);
+        if (targetType != null && expressionType != null) return isUpcasting(targetType, expressionType);
+        else return false;
 
+    }
+
+    public LinkedHashSet<ClassOrInterfaceDeclaration> getCompilationUnitsWithObjectCreationsUpcast() {
+        return compilationUnitsWithObjectCreationsUpcast;
+    }
+
+    public LinkedHashSet<ClassOrInterfaceDeclaration> getCompilationUnitsWithObjectCreationsNotUpcast() {
+        return compilationUnitsWithObjectCreationsNotUpcast;
     }
 
 }
