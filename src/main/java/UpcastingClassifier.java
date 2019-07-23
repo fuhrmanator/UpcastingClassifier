@@ -9,6 +9,7 @@ import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.resolution.UnsolvedSymbolException;
+import com.github.javaparser.resolution.types.ResolvedReferenceType;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.model.resolution.TypeSolver;
@@ -16,6 +17,7 @@ import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSol
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
 import com.github.javaparser.utils.SourceRoot;
+import com.google.common.collect.Sets;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
@@ -40,7 +42,7 @@ public class UpcastingClassifier {
     }
 
     public static void main(String[] args) throws IOException {
-        File projectSourceDir = new File("../../GitHub/FactoryVariants/src");
+        File projectSourceDir = new File("../../git_repos/camel");
         // Configure the typeSolver and JSS
         CombinedTypeSolver typeSolver = new CombinedTypeSolver(
                 new ReflectionTypeSolver(),
@@ -65,8 +67,35 @@ public class UpcastingClassifier {
                 })
                 .collect(Collectors.toList());
 
+        System.out.println("Source root contains " + allCus.size() + " CompilationUnits.");
+
         UpcastingClassifier upcastingClassifier = new UpcastingClassifier(projectSourceDir, typeSolver);
         upcastingClassifier.findObjectCreationExpressions(allCus);
+
+        // Calculate :
+        Sets.SetView<ClassOrInterfaceDeclaration> classesWithBoth =
+                Sets.intersection(upcastingClassifier.getCompilationUnitsWithObjectCreationsUpcast(),
+                upcastingClassifier.getCompilationUnitsWithObjectCreationsNotUpcast());
+        Sets.SetView<ClassOrInterfaceDeclaration> classesWithOnlyUpcasting = Sets.difference(upcastingClassifier.getCompilationUnitsWithObjectCreationsUpcast(),
+                upcastingClassifier.getCompilationUnitsWithObjectCreationsNotUpcast());
+        Sets.SetView<ClassOrInterfaceDeclaration> classesWithOnlyNonUpcasting =
+                Sets.difference(upcastingClassifier.getCompilationUnitsWithObjectCreationsNotUpcast(),
+                upcastingClassifier.getCompilationUnitsWithObjectCreationsUpcast());
+        System.out.println("Classes with only upcasting:");
+        classesWithOnlyUpcasting.stream().forEach(classOrInterfaceDeclaration ->
+                System.out.println(classOrInterfaceDeclaration.asClassOrInterfaceDeclaration().getFullyQualifiedName()
+                        + " extends " + classOrInterfaceDeclaration.asClassOrInterfaceDeclaration().getExtendedTypes())
+        );
+        System.out.println("Classes with only NOT upcasting:");
+        classesWithOnlyNonUpcasting.stream().forEach(classOrInterfaceDeclaration ->
+                System.out.println(classOrInterfaceDeclaration.asClassOrInterfaceDeclaration().getFullyQualifiedName()
+                        + " extends " + classOrInterfaceDeclaration.asClassOrInterfaceDeclaration().getExtendedTypes())
+        );
+        System.out.println("Classes with MIXED upcasting at NOT:");
+        classesWithBoth.stream().forEach(classOrInterfaceDeclaration ->
+                System.out.println(classOrInterfaceDeclaration.asClassOrInterfaceDeclaration().getFullyQualifiedName()
+                + " extends " + classOrInterfaceDeclaration.asClassOrInterfaceDeclaration().getExtendedTypes())
+        );
 
     }
 
@@ -83,9 +112,12 @@ public class UpcastingClassifier {
                     //System.out.println("Object creation in assignment: " + assignExpr.getValue());
                     if (isUpcastingAssignmentExpr(assignExpr))
                         compilationUnitsWithObjectCreationsUpcast.add(getClass(assignExpr));
-                    else
-                        compilationUnitsWithObjectCreationsNotUpcast.add(getClass(assignExpr));
-                    //printContainingClassName(assignExpr);
+                    else {
+                        // ignore cases where hierarchy is flat
+                        if (isUpcastingPossible(assignExpr))
+                            compilationUnitsWithObjectCreationsNotUpcast.add(getClass(assignExpr));
+                        //printContainingClassName(assignExpr);
+                    }
                 }
         );
         objectCreationsInDeclarationInitializers.forEach(variableDeclarator -> {
@@ -94,11 +126,71 @@ public class UpcastingClassifier {
 //                    System.out.println("Object creation in initializer: " + call);
                     if (isUpcastingVariableDeclarator(variableDeclarator))
                         compilationUnitsWithObjectCreationsUpcast.add(getClass(variableDeclarator));
-                    else
-                        compilationUnitsWithObjectCreationsNotUpcast.add(getClass(variableDeclarator));
+                    else {
+                        // ignore cases where hierarchy is flat
+                        if (isUpcastingPossible(variableDeclarator))
+                            compilationUnitsWithObjectCreationsNotUpcast.add(getClass(variableDeclarator));
+                    }
                     //printContainingClassName(variableDeclarator);
                 }
         );
+    }
+
+    private boolean isUpcastingPossible(VariableDeclarator variableDeclarator) {
+        final ObjectCreationExpr objectCreationExpr = variableDeclarator.getInitializer().get().asObjectCreationExpr();
+        return isUpcastingPossibleFromType(objectCreationExpr);
+    }
+
+    private boolean isUpcastingPossible(AssignExpr assignExpr) {
+        final ObjectCreationExpr objectCreationExpr = assignExpr.getValue().asObjectCreationExpr();
+        return isUpcastingPossibleFromType(objectCreationExpr);
+    }
+
+    private boolean isUpcastingPossibleFromType(ObjectCreationExpr objectCreationExpr) {
+        List<ResolvedReferenceType> ancestors = null, classesAncestors = null, interfacesAncestors = null;
+        boolean result = false;
+
+        try {
+            ResolvedType resolvedType = objectCreationExpr.getType().resolve();
+            ancestors = resolvedType.asReferenceType().getAllAncestors();
+            classesAncestors = resolvedType.asReferenceType().getAllClassesAncestors();
+            interfacesAncestors = resolvedType.asReferenceType().getAllInterfacesAncestors();
+
+            if (classesAncestors.size() > 1  // java.lang.Object doesn't count
+                    && interfacesAncestors.size() > 0 && (!areAllMarkerInterfaces(interfacesAncestors))
+            ) {
+                System.out.println(">>>> Upcasting is possible because found the following ancestors: ");
+                result = true;
+            } else {
+                System.out.println(">>>> Upcasting is NOT possible because only found the following ancestors: ");
+            }
+        } catch (UnsolvedSymbolException e) {
+            System.err.printf("!>>>> ERROR: Could not resolve objectCreationExpr type: %s\n", e.getName());
+        } catch (UnsupportedOperationException e) {
+            System.err.printf("!>>>> ERROR: %s\n", e.getMessage());
+        }
+        if (interfacesAncestors != null) {
+            System.out.println(">Implements:");
+            for (ResolvedReferenceType resolvedReferenceType : interfacesAncestors) {
+                System.out.println(resolvedReferenceType.asReferenceType().getQualifiedName() + " (" +
+                        resolvedReferenceType.asReferenceType().getAllMethods().size() + " methods)");
+            }
+        }
+        if (classesAncestors != null) {
+            System.out.println(">Extends:");
+            for (ResolvedReferenceType resolvedReferenceType : classesAncestors) {
+                System.out.println(resolvedReferenceType.asReferenceType().getQualifiedName());
+            }
+        }
+        return result;
+    }
+
+    private boolean areAllMarkerInterfaces(List<ResolvedReferenceType> interfacesAncestors) {
+        for (ResolvedReferenceType resolvedReferenceType : interfacesAncestors) {
+            // marker interfaces don't have methods
+            if (!resolvedReferenceType.asReferenceType().getAllMethods().isEmpty()) return false;
+        }
+        return true;
     }
 
     @NotNull

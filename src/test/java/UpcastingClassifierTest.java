@@ -23,7 +23,7 @@ public class UpcastingClassifierTest {
     private List<CompilationUnit> compilationUnits;
 
     @Test
-    public void testStaticFactoryFinder() {
+    public void testObjectCreationExpressionsFinder() {
         UpcastingClassifier uc = new UpcastingClassifier(projectSourceDir, typeSolver);
         uc.findObjectCreationExpressions(compilationUnits);
 
